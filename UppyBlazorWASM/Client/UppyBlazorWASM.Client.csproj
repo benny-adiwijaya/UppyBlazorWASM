@@ -26,4 +26,19 @@
     <ServiceWorker Include="wwwroot\service-worker.js" PublishedContent="wwwroot\service-worker.published.js" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Remove="wwwroot\npm\" />
+    <Content Remove="wwwroot\npm\src\" />
+    <Content Remove="wwwroot\dist\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="wwwroot\npm\" />
+    <Folder Include="wwwroot\npm\src\" />
+    <Folder Include="wwwroot\dist\" />
+  </ItemGroup>
+
+  <Target Name="PreBuild" BeforeTargets="PreBuildEvent">
+    <Exec Command="npm install" WorkingDirectory="wwwroot/npm" />
+    <Exec Command="npm run build" WorkingDirectory="wwwroot/npm" />
+  </Target>
 </Project>
