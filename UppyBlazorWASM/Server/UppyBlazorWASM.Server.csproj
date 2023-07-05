@@ -10,6 +10,7 @@
   <PropertyGroup Condition=" '$(RunConfiguration)' == 'http' " />
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="7.0.7" />
+    <PackageReference Include="tusdotnet" Version="2.7.1" />
   </ItemGroup>
 
   <ItemGroup>
@@ -18,4 +19,14 @@
   </ItemGroup>
 
 
+  <ItemGroup>
+    <None Remove="Authentication\" />
+    <None Remove="Endpoints\" />
+    <None Remove="Services\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Authentication\" />
+    <Folder Include="Endpoints\" />
+    <Folder Include="Services\" />
+  </ItemGroup>
 </Project>
