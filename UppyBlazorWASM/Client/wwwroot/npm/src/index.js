@@ -6,9 +6,7 @@ import DropTarget from "@uppy/drop-target";
 import "@uppy/core/dist/style.css";
 import "@uppy/dashboard/dist/style.css";
 
-let cnt_name = 0;
-
-window.InitializeUppy = (ext, cnt_altname) => {
+window.InitializeUppy = () => {
     const TUS_ENDPOINT = window.location.origin + '/files';
 
     const uppyDashboard = new Uppy({

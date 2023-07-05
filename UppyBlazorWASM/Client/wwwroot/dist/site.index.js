@@ -20771,9 +20771,7 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
-let cnt_name = 0;
-
-window.InitializeUppy = (ext, cnt_altname) => {
+window.InitializeUppy = () => {
     const TUS_ENDPOINT = window.location.origin + '/files';
 
     const uppyDashboard = new _uppy_core__WEBPACK_IMPORTED_MODULE_0__["default"]({
