@@ -16,6 +16,8 @@ window.InitializeUppy = () => {
             inline: true,
             target: "#uppy",
             showProgressDetails: true,
+            hideUploadButton: true
+            
         })
         .use(DropTarget, {
             target: document.body
@@ -23,4 +25,8 @@ window.InitializeUppy = () => {
         .use(Tus, { endpoint: TUS_ENDPOINT, limit: 6 });
 
     window.uppy = uppyDashboard;
+}
+
+window.Upload = () => {
+    window.uppy.upload();
 }

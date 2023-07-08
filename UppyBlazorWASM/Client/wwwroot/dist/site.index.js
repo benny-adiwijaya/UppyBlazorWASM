@@ -8494,9 +8494,7 @@ class AuthError extends Error {
     this.name = 'AuthError';
     this.isAuthError = true;
   }
-
 }
-
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (AuthError);
 
 /***/ }),
@@ -8516,16 +8514,30 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _tokenStorage_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./tokenStorage.js */ "./node_modules/@uppy/companion-client/lib/tokenStorage.js");
 
 
-
+function _classPrivateFieldLooseBase(receiver, privateKey) { if (!Object.prototype.hasOwnProperty.call(receiver, privateKey)) { throw new TypeError("attempted to use private field on non-instance"); } return receiver; }
+var id = 0;
+function _classPrivateFieldLooseKey(name) { return "__private_" + id++ + "_" + name; }
 
 
 const getName = id => {
   return id.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
 };
-
+var _refreshingTokenPromise = /*#__PURE__*/_classPrivateFieldLooseKey("refreshingTokenPromise");
+var _getAuthToken = /*#__PURE__*/_classPrivateFieldLooseKey("getAuthToken");
+var _removeAuthToken = /*#__PURE__*/_classPrivateFieldLooseKey("removeAuthToken");
 class Provider extends _RequestClient_js__WEBPACK_IMPORTED_MODULE_0__["default"] {
   constructor(uppy, opts) {
     super(uppy, opts);
+    Object.defineProperty(this, _removeAuthToken, {
+      value: _removeAuthToken2
+    });
+    Object.defineProperty(this, _getAuthToken, {
+      value: _getAuthToken2
+    });
+    Object.defineProperty(this, _refreshingTokenPromise, {
+      writable: true,
+      value: void 0
+    });
     this.provider = opts.provider;
     this.id = this.provider;
     this.name = this.opts.name || getName(this.id);
@@ -8534,26 +8546,22 @@ class Provider extends _RequestClient_js__WEBPACK_IMPORTED_MODULE_0__["default"]
     this.companionKeysParams = this.opts.companionKeysParams;
     this.preAuthToken = null;
   }
-
   async headers() {
-    const [headers, token] = await Promise.all([super.headers(), this.getAuthToken()]);
+    const [headers, token] = await Promise.all([super.headers(), _classPrivateFieldLooseBase(this, _getAuthToken)[_getAuthToken]()]);
     const authHeaders = {};
-
     if (token) {
       authHeaders['uppy-auth-token'] = token;
     }
-
     if (this.companionKeysParams) {
       authHeaders['uppy-credentials-params'] = btoa(JSON.stringify({
         params: this.companionKeysParams
       }));
     }
-
-    return { ...headers,
+    return {
+      ...headers,
       ...authHeaders
     };
   }
-
   onReceiveResponse(response) {
     super.onReceiveResponse(response);
     const plugin = this.uppy.getPlugin(this.pluginId);
@@ -8564,53 +8572,72 @@ class Provider extends _RequestClient_js__WEBPACK_IMPORTED_MODULE_0__["default"]
     });
     return response;
   }
-
-  setAuthToken(token) {
+  async setAuthToken(token) {
     return this.uppy.getPlugin(this.pluginId).storage.setItem(this.tokenKey, token);
-  }
-
-  getAuthToken() {
-    return this.uppy.getPlugin(this.pluginId).storage.getItem(this.tokenKey);
   }
   /**
    * Ensure we have a preauth token if necessary. Attempts to fetch one if we don't,
    * or rejects if loading one fails.
    */
-
-
   async ensurePreAuth() {
     if (this.companionKeysParams && !this.preAuthToken) {
       await this.fetchPreAuthToken();
-
       if (!this.preAuthToken) {
         throw new Error('Could not load authentication data required for third-party login. Please try again later.');
       }
     }
   }
-
   authUrl(queries) {
     if (queries === void 0) {
       queries = {};
     }
-
     const params = new URLSearchParams(queries);
-
     if (this.preAuthToken) {
       params.set('uppyPreAuthToken', this.preAuthToken);
     }
-
     return `${this.hostname}/${this.id}/connect?${params}`;
   }
-
+  refreshTokenUrl() {
+    return `${this.hostname}/${this.id}/refresh-token`;
+  }
   fileUrl(id) {
     return `${this.hostname}/${this.id}/get/${id}`;
   }
 
+  /** @protected */
+  async request() {
+    await _classPrivateFieldLooseBase(this, _refreshingTokenPromise)[_refreshingTokenPromise];
+    try {
+      // throw Object.assign(new Error(), { isAuthError: true }) // testing simulate access token expired (to refresh token)
+      return await super.request(...arguments);
+    } catch (err) {
+      if (!err.isAuthError) throw err; // only handle auth errors (401 from provider)
+
+      await _classPrivateFieldLooseBase(this, _refreshingTokenPromise)[_refreshingTokenPromise];
+
+      // Many provider requests may be starting at once, however refresh token should only be called once.
+      // Once a refresh token operation has started, we need all other request to wait for this operation (atomically)
+      _classPrivateFieldLooseBase(this, _refreshingTokenPromise)[_refreshingTokenPromise] = (async () => {
+        try {
+          const response = await super.request({
+            path: this.refreshTokenUrl(),
+            method: 'POST'
+          });
+          await this.setAuthToken(response.uppyAuthToken);
+        } finally {
+          _classPrivateFieldLooseBase(this, _refreshingTokenPromise)[_refreshingTokenPromise] = undefined;
+        }
+      })();
+      await _classPrivateFieldLooseBase(this, _refreshingTokenPromise)[_refreshingTokenPromise];
+
+      // now retry the request with our new refresh token
+      return super.request(...arguments);
+    }
+  }
   async fetchPreAuthToken() {
     if (!this.companionKeysParams) {
       return;
     }
-
     try {
       const res = await this.post(`${this.id}/preauth/`, {
         params: this.companionKeysParams
@@ -8620,40 +8647,33 @@ class Provider extends _RequestClient_js__WEBPACK_IMPORTED_MODULE_0__["default"]
       this.uppy.log(`[CompanionClient] unable to fetch preAuthToken ${err}`, 'warning');
     }
   }
-
   list(directory) {
     return this.get(`${this.id}/list/${directory || ''}`);
   }
-
-  logout() {
-    return this.get(`${this.id}/logout`).then(response => Promise.all([response, this.uppy.getPlugin(this.pluginId).storage.removeItem(this.tokenKey)])).then(_ref => {
-      let [response] = _ref;
-      return response;
-    });
+  async logout() {
+    const response = await this.get(`${this.id}/logout`);
+    await _classPrivateFieldLooseBase(this, _removeAuthToken)[_removeAuthToken]();
+    return response;
   }
-
   static initPlugin(plugin, opts, defaultOpts) {
     /* eslint-disable no-param-reassign */
     plugin.type = 'acquirer';
     plugin.files = [];
-
     if (defaultOpts) {
-      plugin.opts = { ...defaultOpts,
+      plugin.opts = {
+        ...defaultOpts,
         ...opts
       };
     }
-
     if (opts.serverUrl || opts.serverPattern) {
       throw new Error('`serverUrl` and `serverPattern` have been renamed to `companionUrl` and `companionAllowedHosts` respectively in the 0.30.5 release. Please consult the docs (for example, https://uppy.io/docs/instagram/ for the Instagram plugin) and use the updated options.`');
     }
-
     if (opts.companionAllowedHosts) {
-      const pattern = opts.companionAllowedHosts; // validate companionAllowedHosts param
-
+      const pattern = opts.companionAllowedHosts;
+      // validate companionAllowedHosts param
       if (typeof pattern !== 'string' && !Array.isArray(pattern) && !(pattern instanceof RegExp)) {
         throw new TypeError(`${plugin.id}: the option "companionAllowedHosts" must be one of string, Array, RegExp`);
       }
-
       plugin.opts.companionAllowedHosts = pattern;
     } else if (/^(?!https?:\/\/).*$/i.test(opts.companionUrl)) {
       // does not start with https://
@@ -8661,11 +8681,15 @@ class Provider extends _RequestClient_js__WEBPACK_IMPORTED_MODULE_0__["default"]
     } else {
       plugin.opts.companionAllowedHosts = new URL(opts.companionUrl).origin;
     }
-
     plugin.storage = plugin.opts.storage || _tokenStorage_js__WEBPACK_IMPORTED_MODULE_1__;
     /* eslint-enable no-param-reassign */
   }
-
+}
+async function _getAuthToken2() {
+  return this.uppy.getPlugin(this.pluginId).storage.getItem(this.tokenKey);
+}
+async function _removeAuthToken2() {
+  return this.uppy.getPlugin(this.pluginId).storage.removeItem(this.tokenKey);
 }
 
 /***/ }),
@@ -8687,63 +8711,42 @@ __webpack_require__.r(__webpack_exports__);
 
 
 let _Symbol$for;
-
 function _classPrivateFieldLooseBase(receiver, privateKey) { if (!Object.prototype.hasOwnProperty.call(receiver, privateKey)) { throw new TypeError("attempted to use private field on non-instance"); } return receiver; }
-
 var id = 0;
-
 function _classPrivateFieldLooseKey(name) { return "__private_" + id++ + "_" + name; }
 
 
 
-
 const packageJson = {
-  "version": "3.1.3"
+  "version": "3.2.0"
 }; // Remove the trailing slash so we can always safely append /xyz.
-
 function stripSlash(url) {
   return url.replace(/\/$/, '');
 }
-
 async function handleJSONResponse(res) {
   if (res.status === 401) {
     throw new _AuthError_js__WEBPACK_IMPORTED_MODULE_2__["default"]();
   }
-
   const jsonPromise = res.json();
-
   if (res.ok) {
     return jsonPromise;
   }
-
   let errMsg = `Failed request with status: ${res.status}. ${res.statusText}`;
-
   try {
     const errData = await jsonPromise;
     errMsg = errData.message ? `${errMsg} message: ${errData.message}` : errMsg;
     errMsg = errData.requestId ? `${errMsg} request-Id: ${errData.requestId}` : errMsg;
-  } catch {
-    /* if the response contains invalid JSON, let's ignore the error */
-  }
-
+  } catch {/* if the response contains invalid JSON, let's ignore the error */}
   throw new Error(errMsg);
-} // todo pull out into core instead?
+}
 
-
+// todo pull out into core instead?
 const allowedHeadersCache = new Map();
-
 var _companionHeaders = /*#__PURE__*/_classPrivateFieldLooseKey("companionHeaders");
-
 var _getUrl = /*#__PURE__*/_classPrivateFieldLooseKey("getUrl");
-
-var _request = /*#__PURE__*/_classPrivateFieldLooseKey("request");
-
 _Symbol$for = Symbol.for('uppy test: getCompanionHeaders');
 class RequestClient {
   constructor(uppy, opts) {
-    Object.defineProperty(this, _request, {
-      value: _request2
-    });
     Object.defineProperty(this, _getUrl, {
       value: _getUrl2
     });
@@ -8756,15 +8759,12 @@ class RequestClient {
     this.onReceiveResponse = this.onReceiveResponse.bind(this);
     _classPrivateFieldLooseBase(this, _companionHeaders)[_companionHeaders] = opts == null ? void 0 : opts.companionHeaders;
   }
-
   setCompanionHeaders(headers) {
     _classPrivateFieldLooseBase(this, _companionHeaders)[_companionHeaders] = headers;
   }
-
   [_Symbol$for]() {
     return _classPrivateFieldLooseBase(this, _companionHeaders)[_companionHeaders];
   }
-
   get hostname() {
     const {
       companion
@@ -8772,35 +8772,35 @@ class RequestClient {
     const host = this.opts.companionUrl;
     return stripSlash(companion && companion[host] ? companion[host] : host);
   }
-
   async headers() {
     const defaultHeaders = {
       Accept: 'application/json',
       'Content-Type': 'application/json',
       'Uppy-Versions': `@uppy/companion-client=${RequestClient.VERSION}`
     };
-    return { ...defaultHeaders,
+    return {
+      ...defaultHeaders,
       ..._classPrivateFieldLooseBase(this, _companionHeaders)[_companionHeaders]
     };
   }
-
   onReceiveResponse(_ref) {
     let {
       headers
     } = _ref;
     const state = this.uppy.getState();
     const companion = state.companion || {};
-    const host = this.opts.companionUrl; // Store the self-identified domain name for the Companion instance we just hit.
+    const host = this.opts.companionUrl;
 
+    // Store the self-identified domain name for the Companion instance we just hit.
     if (headers.has('i-am') && headers.get('i-am') !== companion[host]) {
       this.uppy.setState({
-        companion: { ...companion,
+        companion: {
+          ...companion,
           [host]: headers.get('i-am')
         }
       });
     }
   }
-
   /*
     Preflight was added to avoid breaking change between older Companion-client versions and
     newer Companion versions and vice-versa. Usually the break will manifest via CORS errors because a
@@ -8818,139 +8818,124 @@ class RequestClient {
     const allowedHeadersCached = allowedHeadersCache.get(this.hostname);
     if (allowedHeadersCached != null) return allowedHeadersCached;
     const fallbackAllowedHeaders = ['accept', 'content-type', 'uppy-auth-token'];
-
     const promise = (async () => {
       try {
         const response = await fetch(_classPrivateFieldLooseBase(this, _getUrl)[_getUrl](path), {
           method: 'OPTIONS'
         });
         const header = response.headers.get('access-control-allow-headers');
-
         if (header == null || header === '*') {
           allowedHeadersCache.set(this.hostname, fallbackAllowedHeaders);
           return fallbackAllowedHeaders;
         }
-
         this.uppy.log(`[CompanionClient] adding allowed preflight headers to companion cache: ${this.hostname} ${header}`);
         const allowedHeaders = header.split(',').map(headerName => headerName.trim().toLowerCase());
         allowedHeadersCache.set(this.hostname, allowedHeaders);
         return allowedHeaders;
       } catch (err) {
-        this.uppy.log(`[CompanionClient] unable to make preflight request ${err}`, 'warning'); // If the user gets a network error or similar, we should try preflight
+        this.uppy.log(`[CompanionClient] unable to make preflight request ${err}`, 'warning');
+        // If the user gets a network error or similar, we should try preflight
         // again next time, or else we might get incorrect behaviour.
-
         allowedHeadersCache.delete(this.hostname); // re-fetch next time
-
         return fallbackAllowedHeaders;
       }
     })();
-
     allowedHeadersCache.set(this.hostname, promise);
     return promise;
   }
-
   async preflightAndHeaders(path) {
-    const [allowedHeaders, headers] = await Promise.all([this.preflight(path), this.headers()]); // filter to keep only allowed Headers
-
+    const [allowedHeaders, headers] = await Promise.all([this.preflight(path), this.headers()]);
+    // filter to keep only allowed Headers
     return Object.fromEntries(Object.entries(headers).filter(_ref2 => {
       let [header] = _ref2;
-
       if (!allowedHeaders.includes(header.toLowerCase())) {
         this.uppy.log(`[CompanionClient] excluding disallowed header ${header}`);
         return false;
       }
-
       return true;
     }));
   }
 
+  /** @protected */
+  async request(_ref3) {
+    let {
+      path,
+      method = 'GET',
+      data,
+      skipPostResponse,
+      signal
+    } = _ref3;
+    try {
+      const headers = await this.preflightAndHeaders(path);
+      const response = await (0,_uppy_utils_lib_fetchWithNetworkError__WEBPACK_IMPORTED_MODULE_0__["default"])(_classPrivateFieldLooseBase(this, _getUrl)[_getUrl](path), {
+        method,
+        signal,
+        headers,
+        credentials: this.opts.companionCookiesRule || 'same-origin',
+        body: data ? JSON.stringify(data) : null
+      });
+      if (!skipPostResponse) this.onReceiveResponse(response);
+      return handleJSONResponse(response);
+    } catch (err) {
+      if (err != null && err.isAuthError) throw err;
+      throw new _uppy_utils_lib_ErrorWithCause__WEBPACK_IMPORTED_MODULE_1__["default"](`Could not ${method} ${_classPrivateFieldLooseBase(this, _getUrl)[_getUrl](path)}`, {
+        cause: err
+      });
+    }
+  }
   async get(path, options) {
     if (options === void 0) {
       options = undefined;
     }
-
     // TODO: remove boolean support for options that was added for backward compatibility.
     // eslint-disable-next-line no-param-reassign
     if (typeof options === 'boolean') options = {
       skipPostResponse: options
     };
-    return _classPrivateFieldLooseBase(this, _request)[_request]({ ...options,
+    return this.request({
+      ...options,
       path
     });
   }
-
   async post(path, data, options) {
     if (options === void 0) {
       options = undefined;
     }
-
     // TODO: remove boolean support for options that was added for backward compatibility.
     // eslint-disable-next-line no-param-reassign
     if (typeof options === 'boolean') options = {
       skipPostResponse: options
     };
-    return _classPrivateFieldLooseBase(this, _request)[_request]({ ...options,
+    return this.request({
+      ...options,
       path,
       method: 'POST',
       data
     });
   }
-
   async delete(path, data, options) {
     if (data === void 0) {
       data = undefined;
     }
-
     // TODO: remove boolean support for options that was added for backward compatibility.
     // eslint-disable-next-line no-param-reassign
     if (typeof options === 'boolean') options = {
       skipPostResponse: options
     };
-    return _classPrivateFieldLooseBase(this, _request)[_request]({ ...options,
+    return this.request({
+      ...options,
       path,
       method: 'DELETE',
       data
     });
   }
-
 }
-
 function _getUrl2(url) {
   if (/^(https?:|)\/\//.test(url)) {
     return url;
   }
-
   return `${this.hostname}/${url}`;
 }
-
-async function _request2(_ref3) {
-  let {
-    path,
-    method = 'GET',
-    data,
-    skipPostResponse,
-    signal
-  } = _ref3;
-
-  try {
-    const headers = await this.preflightAndHeaders(path);
-    const response = await (0,_uppy_utils_lib_fetchWithNetworkError__WEBPACK_IMPORTED_MODULE_0__["default"])(_classPrivateFieldLooseBase(this, _getUrl)[_getUrl](path), {
-      method,
-      signal,
-      headers,
-      credentials: this.opts.companionCookiesRule || 'same-origin',
-      body: data ? JSON.stringify(data) : null
-    });
-    if (!skipPostResponse) this.onReceiveResponse(response);
-    return handleJSONResponse(response);
-  } catch (err) {
-    if (err != null && err.isAuthError) throw err;
-    throw new _uppy_utils_lib_ErrorWithCause__WEBPACK_IMPORTED_MODULE_1__["default"](`Could not ${method} ${_classPrivateFieldLooseBase(this, _getUrl)[_getUrl](path)}`, {
-      cause: err
-    });
-  }
-}
-
 RequestClient.VERSION = packageJson.version;
 
 /***/ }),
@@ -8970,11 +8955,9 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
-
 const getName = id => {
   return id.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
 };
-
 class SearchProvider extends _RequestClient_js__WEBPACK_IMPORTED_MODULE_0__["default"] {
   constructor(uppy, opts) {
     super(uppy, opts);
@@ -8983,15 +8966,12 @@ class SearchProvider extends _RequestClient_js__WEBPACK_IMPORTED_MODULE_0__["def
     this.name = this.opts.name || getName(this.id);
     this.pluginId = this.opts.pluginId;
   }
-
   fileUrl(id) {
     return `${this.hostname}/search/${this.id}/get/${id}`;
   }
-
   search(text, queries) {
     return this.get(`search/${this.id}/list?q=${encodeURIComponent(text)}${queries ? `&${queries}` : ''}`);
   }
-
 }
 
 /***/ }),
@@ -9009,25 +8989,15 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ });
 /* harmony import */ var namespace_emitter__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! namespace-emitter */ "./node_modules/namespace-emitter/index.js");
 let _Symbol$for, _Symbol$for2;
-
 function _classPrivateFieldLooseBase(receiver, privateKey) { if (!Object.prototype.hasOwnProperty.call(receiver, privateKey)) { throw new TypeError("attempted to use private field on non-instance"); } return receiver; }
-
 var id = 0;
-
 function _classPrivateFieldLooseKey(name) { return "__private_" + id++ + "_" + name; }
 
-
-
 var _queued = /*#__PURE__*/_classPrivateFieldLooseKey("queued");
-
 var _emitter = /*#__PURE__*/_classPrivateFieldLooseKey("emitter");
-
 var _isOpen = /*#__PURE__*/_classPrivateFieldLooseKey("isOpen");
-
 var _socket = /*#__PURE__*/_classPrivateFieldLooseKey("socket");
-
 var _handleMessage = /*#__PURE__*/_classPrivateFieldLooseKey("handleMessage");
-
 _Symbol$for = Symbol.for('uppy test: getSocket');
 _Symbol$for2 = Symbol.for('uppy test: getQueued');
 class UppySocket {
@@ -9061,81 +9031,63 @@ class UppySocket {
       }
     });
     this.opts = opts;
-
     if (!opts || opts.autoOpen !== false) {
       this.open();
     }
   }
-
   get isOpen() {
     return _classPrivateFieldLooseBase(this, _isOpen)[_isOpen];
   }
-
   [_Symbol$for]() {
     return _classPrivateFieldLooseBase(this, _socket)[_socket];
   }
-
   [_Symbol$for2]() {
     return _classPrivateFieldLooseBase(this, _queued)[_queued];
   }
-
   open() {
     if (_classPrivateFieldLooseBase(this, _socket)[_socket] != null) return;
     _classPrivateFieldLooseBase(this, _socket)[_socket] = new WebSocket(this.opts.target);
-
     _classPrivateFieldLooseBase(this, _socket)[_socket].onopen = () => {
       _classPrivateFieldLooseBase(this, _isOpen)[_isOpen] = true;
-
       while (_classPrivateFieldLooseBase(this, _queued)[_queued].length > 0 && _classPrivateFieldLooseBase(this, _isOpen)[_isOpen]) {
         const first = _classPrivateFieldLooseBase(this, _queued)[_queued].shift();
-
         this.send(first.action, first.payload);
       }
     };
-
     _classPrivateFieldLooseBase(this, _socket)[_socket].onclose = () => {
       _classPrivateFieldLooseBase(this, _isOpen)[_isOpen] = false;
       _classPrivateFieldLooseBase(this, _socket)[_socket] = null;
     };
-
     _classPrivateFieldLooseBase(this, _socket)[_socket].onmessage = _classPrivateFieldLooseBase(this, _handleMessage)[_handleMessage];
   }
-
   close() {
     var _classPrivateFieldLoo;
-
     (_classPrivateFieldLoo = _classPrivateFieldLooseBase(this, _socket)[_socket]) == null ? void 0 : _classPrivateFieldLoo.close();
   }
-
   send(action, payload) {
     // attach uuid
+
     if (!_classPrivateFieldLooseBase(this, _isOpen)[_isOpen]) {
       _classPrivateFieldLooseBase(this, _queued)[_queued].push({
         action,
         payload
       });
-
       return;
     }
-
     _classPrivateFieldLooseBase(this, _socket)[_socket].send(JSON.stringify({
       action,
       payload
     }));
   }
-
   on(action, handler) {
     _classPrivateFieldLooseBase(this, _emitter)[_emitter].on(action, handler);
   }
-
   emit(action, payload) {
     _classPrivateFieldLooseBase(this, _emitter)[_emitter].emit(action, payload);
   }
-
   once(action, handler) {
     _classPrivateFieldLooseBase(this, _emitter)[_emitter].once(action, handler);
   }
-
 }
 
 /***/ }),
@@ -9159,10 +9111,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _SearchProvider_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./SearchProvider.js */ "./node_modules/@uppy/companion-client/lib/SearchProvider.js");
 /* harmony import */ var _Socket_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./Socket.js */ "./node_modules/@uppy/companion-client/lib/Socket.js");
 
+
 /**
  * Manages communications with Companion
  */
-
 
 
 
@@ -9184,10 +9136,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   setItem: () => (/* binding */ setItem)
 /* harmony export */ });
 
+
 /**
  * This module serves as an Async wrapper for LocalStorage
  */
-
 function setItem(key, value) {
   return new Promise(resolve => {
     localStorage.setItem(key, value);
@@ -9645,6 +9597,67 @@ class UIPlugin extends _BasePlugin_js__WEBPACK_IMPORTED_MODULE_3__["default"] {
 
 /***/ }),
 
+/***/ "./node_modules/@uppy/core/lib/UploaderPlugin.js":
+/*!*******************************************************!*\
+  !*** ./node_modules/@uppy/core/lib/UploaderPlugin.js ***!
+  \*******************************************************/
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (/* binding */ UploaderPlugin)
+/* harmony export */ });
+/* harmony import */ var _BasePlugin_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./BasePlugin.js */ "./node_modules/@uppy/core/lib/BasePlugin.js");
+function _classPrivateFieldLooseBase(receiver, privateKey) { if (!Object.prototype.hasOwnProperty.call(receiver, privateKey)) { throw new TypeError("attempted to use private field on non-instance"); } return receiver; }
+var id = 0;
+function _classPrivateFieldLooseKey(name) { return "__private_" + id++ + "_" + name; }
+
+var _queueRequestSocketToken = /*#__PURE__*/_classPrivateFieldLooseKey("queueRequestSocketToken");
+class UploaderPlugin extends _BasePlugin_js__WEBPACK_IMPORTED_MODULE_0__["default"] {
+  constructor() {
+    super(...arguments);
+    Object.defineProperty(this, _queueRequestSocketToken, {
+      writable: true,
+      value: void 0
+    });
+  }
+  /** @protected */
+  setQueueRequestSocketToken(fn) {
+    _classPrivateFieldLooseBase(this, _queueRequestSocketToken)[_queueRequestSocketToken] = fn;
+  }
+  async uploadRemoteFile(file, options) {
+    if (options === void 0) {
+      options = {};
+    }
+    // TODO: we could rewrite this to use server-sent events instead of creating WebSockets.
+    try {
+      if (file.serverToken) {
+        return await this.connectToServerSocket(file);
+      }
+      const serverToken = await _classPrivateFieldLooseBase(this, _queueRequestSocketToken)[_queueRequestSocketToken](file).abortOn(options.signal);
+      if (!this.uppy.getState().files[file.id]) return undefined;
+      this.uppy.setFileState(file.id, {
+        serverToken
+      });
+      return await this.connectToServerSocket(this.uppy.getFile(file.id));
+    } catch (err) {
+      var _err$cause;
+      if ((err == null ? void 0 : (_err$cause = err.cause) == null ? void 0 : _err$cause.name) === 'AbortError') {
+        // The file upload was aborted, it’s not an error
+        return undefined;
+      }
+      this.uppy.setFileState(file.id, {
+        serverToken: undefined
+      });
+      this.uppy.emit('upload-error', file, err);
+      throw err;
+    }
+  }
+}
+
+/***/ }),
+
 /***/ "./node_modules/@uppy/core/lib/Uppy.js":
 /*!*********************************************!*\
   !*** ./node_modules/@uppy/core/lib/Uppy.js ***!
@@ -9689,7 +9702,7 @@ function _classPrivateFieldLooseKey(name) { return "__private_" + id++ + "_" + n
 
 
 const packageJson = {
-  "version": "3.2.1"
+  "version": "3.3.0"
 };
 
 
@@ -11066,15 +11079,15 @@ function _addListeners2() {
   this.on('upload-error', (file, error, response) => {
     errorHandler(error, file, response);
     if (typeof error === 'object' && error.message) {
-      const newError = new Error(error.message);
+      this.log(error.message, 'error');
+      const newError = new Error(this.i18n('failedToUpload', {
+        file: file == null ? void 0 : file.name
+      }));
       newError.isUserFacing = true; // todo maybe don't do this with all errors?
       newError.details = error.message;
       if (error.details) {
         newError.details += ` ${error.details}`;
       }
-      newError.message = this.i18n('failedToUpload', {
-        file: file == null ? void 0 : file.name
-      });
       _classPrivateFieldLooseBase(this, _informAndEmit)[_informAndEmit]([newError]);
     } else {
       _classPrivateFieldLooseBase(this, _informAndEmit)[_informAndEmit]([error]);
@@ -16228,11 +16241,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ });
 /* harmony import */ var preact__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! preact */ "./node_modules/preact/dist/preact.module.js");
 /* harmony import */ var classnames__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! classnames */ "./node_modules/classnames/index.js");
-/* harmony import */ var lodash_throttle_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! lodash/throttle.js */ "./node_modules/lodash/throttle.js");
-/* harmony import */ var _transloadit_prettier_bytes__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! @transloadit/prettier-bytes */ "./node_modules/@transloadit/prettier-bytes/prettierBytes.js");
-/* harmony import */ var _uppy_utils_lib_prettyETA__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! @uppy/utils/lib/prettyETA */ "./node_modules/@uppy/utils/lib/prettyETA.js");
-/* harmony import */ var _StatusBarStates_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./StatusBarStates.js */ "./node_modules/@uppy/status-bar/lib/StatusBarStates.js");
-
+/* harmony import */ var _transloadit_prettier_bytes__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! @transloadit/prettier-bytes */ "./node_modules/@transloadit/prettier-bytes/prettierBytes.js");
+/* harmony import */ var _uppy_utils_lib_prettyETA__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! @uppy/utils/lib/prettyETA */ "./node_modules/@uppy/utils/lib/prettyETA.js");
+/* harmony import */ var _StatusBarStates_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./StatusBarStates.js */ "./node_modules/@uppy/status-bar/lib/StatusBarStates.js");
 
 
 
@@ -16251,7 +16262,7 @@ function UploadBtn(props) {
     startUpload
   } = props;
   const uploadBtnClassNames = classnames__WEBPACK_IMPORTED_MODULE_1__('uppy-u-reset', 'uppy-c-btn', 'uppy-StatusBar-actionBtn', 'uppy-StatusBar-actionBtn--upload', {
-    'uppy-c-btn-primary': uploadState === _StatusBarStates_js__WEBPACK_IMPORTED_MODULE_5__["default"].STATE_WAITING
+    'uppy-c-btn-primary': uploadState === _StatusBarStates_js__WEBPACK_IMPORTED_MODULE_4__["default"].STATE_WAITING
   }, {
     'uppy-StatusBar-actionBtn--disabled': isSomeGhost
   });
@@ -16429,10 +16440,10 @@ function ProgressDetails(props) {
   }), (0,preact__WEBPACK_IMPORTED_MODULE_0__.h)("span", {
     className: "uppy-StatusBar-additionalInfo"
   }, ifShowFilesUploadedOfTotal && renderDot(), i18n('dataUploadedOfTotal', {
-    complete: _transloadit_prettier_bytes__WEBPACK_IMPORTED_MODULE_3__(totalUploadedSize),
-    total: _transloadit_prettier_bytes__WEBPACK_IMPORTED_MODULE_3__(totalSize)
+    complete: _transloadit_prettier_bytes__WEBPACK_IMPORTED_MODULE_2__(totalUploadedSize),
+    total: _transloadit_prettier_bytes__WEBPACK_IMPORTED_MODULE_2__(totalSize)
   }), renderDot(), i18n('xTimeLeft', {
-    time: (0,_uppy_utils_lib_prettyETA__WEBPACK_IMPORTED_MODULE_4__["default"])(totalETA)
+    time: (0,_uppy_utils_lib_prettyETA__WEBPACK_IMPORTED_MODULE_3__["default"])(totalETA)
   })));
 }
 function FileUploadCount(props) {
@@ -16470,10 +16481,6 @@ function UploadNewlyAddedFiles(props) {
     onClick: startUpload
   }, i18n('upload')));
 }
-const ThrottledProgressDetails = lodash_throttle_js__WEBPACK_IMPORTED_MODULE_2__(ProgressDetails, 500, {
-  leading: true,
-  trailing: true
-});
 function ProgressBarUploading(props) {
   const {
     i18n,
@@ -16499,7 +16506,7 @@ function ProgressBarUploading(props) {
   function renderProgressDetails() {
     if (!isAllPaused && !showUploadNewlyAddedFiles && showProgressDetails) {
       if (supportsUploadProgress) {
-        return (0,preact__WEBPACK_IMPORTED_MODULE_0__.h)(ThrottledProgressDetails, {
+        return (0,preact__WEBPACK_IMPORTED_MODULE_0__.h)(ProgressDetails, {
           numUploads: numUploads,
           complete: complete,
           totalUploadedSize: totalUploadedSize,
@@ -16625,7 +16632,7 @@ function _classPrivateFieldLooseKey(name) { return "__private_" + id++ + "_" + n
 
 
 const packageJson = {
-  "version": "3.2.0"
+  "version": "3.2.1"
 };
 
 const speedFilterHalfLife = 2000;
@@ -16699,14 +16706,24 @@ class StatusBar extends _uppy_core__WEBPACK_IMPORTED_MODULE_0__.UIPlugin {
       const {
         recoveredState
       } = this.uppy.getState();
+      _classPrivateFieldLooseBase(this, _previousSpeed)[_previousSpeed] = null;
+      _classPrivateFieldLooseBase(this, _previousETA)[_previousETA] = null;
       if (recoveredState) {
+        _classPrivateFieldLooseBase(this, _previousUploadedBytes)[_previousUploadedBytes] = Object.values(recoveredState.files).reduce((pv, _ref) => {
+          let {
+            progress
+          } = _ref;
+          return pv + progress.bytesUploaded;
+        }, 0);
+
+        // We don't set `#lastUpdateTime` at this point because the upload won't
+        // actually resume until the user asks for it.
+
         this.uppy.emit('restore-confirmed');
         return undefined;
       }
       _classPrivateFieldLooseBase(this, _lastUpdateTime)[_lastUpdateTime] = performance.now();
       _classPrivateFieldLooseBase(this, _previousUploadedBytes)[_previousUploadedBytes] = 0;
-      _classPrivateFieldLooseBase(this, _previousSpeed)[_previousSpeed] = null;
-      _classPrivateFieldLooseBase(this, _previousETA)[_previousETA] = null;
       return this.uppy.upload().catch(() => {
         // Error logged in Core
       });
@@ -16828,13 +16845,17 @@ class StatusBar extends _uppy_core__WEBPACK_IMPORTED_MODULE_0__.UIPlugin {
   }
 }
 function _computeSmoothETA2(totalBytes) {
+  var _classPrivateFieldLoo, _classPrivateFieldLoo2;
   if (totalBytes.total === 0 || totalBytes.remaining === 0) {
     return 0;
   }
+
+  // When state is restored, lastUpdateTime is still nullish at this point.
+  (_classPrivateFieldLoo2 = (_classPrivateFieldLoo = _classPrivateFieldLooseBase(this, _lastUpdateTime))[_lastUpdateTime]) != null ? _classPrivateFieldLoo2 : _classPrivateFieldLoo[_lastUpdateTime] = performance.now();
   const dt = performance.now() - _classPrivateFieldLooseBase(this, _lastUpdateTime)[_lastUpdateTime];
   if (dt === 0) {
-    var _classPrivateFieldLoo;
-    return Math.round(((_classPrivateFieldLoo = _classPrivateFieldLooseBase(this, _previousETA)[_previousETA]) != null ? _classPrivateFieldLoo : 0) / 100) / 10;
+    var _classPrivateFieldLoo3;
+    return Math.round(((_classPrivateFieldLoo3 = _classPrivateFieldLooseBase(this, _previousETA)[_previousETA]) != null ? _classPrivateFieldLoo3 : 0) / 100) / 10;
   }
   const uploadedBytesSinceLastTick = totalBytes.uploaded - _classPrivateFieldLooseBase(this, _previousUploadedBytes)[_previousUploadedBytes];
   _classPrivateFieldLooseBase(this, _previousUploadedBytes)[_previousUploadedBytes] = totalBytes.uploaded;
@@ -16842,8 +16863,8 @@ function _computeSmoothETA2(totalBytes) {
   // uploadedBytesSinceLastTick can be negative in some cases (packet loss?)
   // in which case, we wait for next tick to update ETA.
   if (uploadedBytesSinceLastTick <= 0) {
-    var _classPrivateFieldLoo2;
-    return Math.round(((_classPrivateFieldLoo2 = _classPrivateFieldLooseBase(this, _previousETA)[_previousETA]) != null ? _classPrivateFieldLoo2 : 0) / 100) / 10;
+    var _classPrivateFieldLoo4;
+    return Math.round(((_classPrivateFieldLoo4 = _classPrivateFieldLooseBase(this, _previousETA)[_previousETA]) != null ? _classPrivateFieldLoo4 : 0) / 100) / 10;
   }
   const currentSpeed = uploadedBytesSinceLastTick / dt;
   const filteredSpeed = _classPrivateFieldLooseBase(this, _previousSpeed)[_previousSpeed] == null ? currentSpeed : (0,_uppy_utils_lib_emaFilter__WEBPACK_IMPORTED_MODULE_1__["default"])(currentSpeed, _classPrivateFieldLooseBase(this, _previousSpeed)[_previousSpeed], speedFilterHalfLife, dt);
@@ -17799,7 +17820,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (/* binding */ Tus)
 /* harmony export */ });
-/* harmony import */ var _uppy_core_lib_BasePlugin_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @uppy/core/lib/BasePlugin.js */ "./node_modules/@uppy/core/lib/BasePlugin.js");
+/* harmony import */ var _uppy_core_lib_UploaderPlugin_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @uppy/core/lib/UploaderPlugin.js */ "./node_modules/@uppy/core/lib/UploaderPlugin.js");
 /* harmony import */ var tus_js_client__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! tus-js-client */ "./node_modules/tus-js-client/lib.esm/browser/index.js");
 /* harmony import */ var _uppy_companion_client__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! @uppy/companion-client */ "./node_modules/@uppy/companion-client/lib/index.js");
 /* harmony import */ var _uppy_utils_lib_emitSocketProgress__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! @uppy/utils/lib/emitSocketProgress */ "./node_modules/@uppy/utils/lib/emitSocketProgress.js");
@@ -17827,7 +17848,7 @@ function _classPrivateFieldLooseKey(name) { return "__private_" + id++ + "_" + n
 
 
 const packageJson = {
-  "version": "3.1.1"
+  "version": "3.1.2"
 };
 /** @typedef {import('..').TusOptions} TusOptions */
 /** @typedef {import('tus-js-client').UploadOptions} RawTusOptions */
@@ -17864,13 +17885,11 @@ const tusDefaultOptions = {
  * Tus resumable file uploader
  */
 var _retryDelayIterator = /*#__PURE__*/_classPrivateFieldLooseKey("retryDelayIterator");
-var _queueRequestSocketToken = /*#__PURE__*/_classPrivateFieldLooseKey("queueRequestSocketToken");
 var _upload = /*#__PURE__*/_classPrivateFieldLooseKey("upload");
 var _requestSocketToken = /*#__PURE__*/_classPrivateFieldLooseKey("requestSocketToken");
-var _uploadRemote = /*#__PURE__*/_classPrivateFieldLooseKey("uploadRemote");
 var _uploadFiles = /*#__PURE__*/_classPrivateFieldLooseKey("uploadFiles");
 var _handleUpload = /*#__PURE__*/_classPrivateFieldLooseKey("handleUpload");
-class Tus extends _uppy_core_lib_BasePlugin_js__WEBPACK_IMPORTED_MODULE_0__["default"] {
+class Tus extends _uppy_core_lib_UploaderPlugin_js__WEBPACK_IMPORTED_MODULE_0__["default"] {
   /**
    * @param {Uppy} uppy
    * @param {TusOptions} opts
@@ -17883,15 +17902,6 @@ class Tus extends _uppy_core_lib_BasePlugin_js__WEBPACK_IMPORTED_MODULE_0__["def
      */
     Object.defineProperty(this, _uploadFiles, {
       value: _uploadFiles2
-    });
-    // NOTE! Keep this duplicated code in sync with other plugins
-    // TODO we should probably abstract this into a common function
-    /**
-     * @param {UppyFile} file for use with upload
-     * @returns {Promise<void>}
-     */
-    Object.defineProperty(this, _uploadRemote, {
-      value: _uploadRemote2
     });
     /**
      * Create a new Tus upload.
@@ -17932,10 +17942,6 @@ class Tus extends _uppy_core_lib_BasePlugin_js__WEBPACK_IMPORTED_MODULE_0__["def
       value: _upload2
     });
     Object.defineProperty(this, _retryDelayIterator, {
-      writable: true,
-      value: void 0
-    });
-    Object.defineProperty(this, _queueRequestSocketToken, {
       writable: true,
       value: void 0
     });
@@ -18017,9 +18023,9 @@ class Tus extends _uppy_core_lib_BasePlugin_js__WEBPACK_IMPORTED_MODULE_0__["def
     this.uploaderEvents = Object.create(null);
     this.uploaderSockets = Object.create(null);
     this.handleResetProgress = this.handleResetProgress.bind(this);
-    _classPrivateFieldLooseBase(this, _queueRequestSocketToken)[_queueRequestSocketToken] = this.requests.wrapPromiseFunction(_classPrivateFieldLooseBase(this, _requestSocketToken)[_requestSocketToken], {
+    this.setQueueRequestSocketToken(this.requests.wrapPromiseFunction(_classPrivateFieldLooseBase(this, _requestSocketToken)[_requestSocketToken], {
       priority: -1
-    });
+    }));
   }
   handleResetProgress() {
     const files = {
@@ -18435,8 +18441,10 @@ function _upload2(file) {
           }
           this.requests.rateLimit(next.value);
         }
-      } else if (status > 400 && status < 500 && status !== 409) {
+      } else if (status > 400 && status < 500 && status !== 409 && status !== 423) {
         // HTTP 4xx, the server won't send anything, it's doesn't make sense to retry
+        // HTTP 409 Conflict (happens if the Upload-Offset header does not match the one on the server)
+        // HTTP 423 Locked (happens when a paused download is resumed too quickly)
         return false;
       } else if (typeof navigator !== 'undefined' && navigator.onLine === false) {
         // The navigator is offline, let's wait for it to come back online.
@@ -18565,31 +18573,6 @@ function _upload2(file) {
     throw err;
   });
 }
-async function _uploadRemote2(file, options) {
-  this.resetUploaderReferences(file.id);
-  try {
-    if (file.serverToken) {
-      return await this.connectToServerSocket(file);
-    }
-    const serverToken = await _classPrivateFieldLooseBase(this, _queueRequestSocketToken)[_queueRequestSocketToken](file, options).abortOn(options == null ? void 0 : options.signal);
-    if (!this.uppy.getState().files[file.id]) return undefined;
-    this.uppy.setFileState(file.id, {
-      serverToken
-    });
-    return await this.connectToServerSocket(this.uppy.getFile(file.id));
-  } catch (err) {
-    var _err$cause;
-    if ((err == null ? void 0 : (_err$cause = err.cause) == null ? void 0 : _err$cause.name) !== 'AbortError') {
-      this.uppy.setFileState(file.id, {
-        serverToken: undefined
-      });
-      this.uppy.emit('upload-error', file, err);
-      throw err;
-    }
-    // The file upload was aborted, it’s not an error
-    return undefined;
-  }
-}
 async function _uploadFiles2(files) {
   const filesFiltered = (0,_uppy_utils_lib_fileFilters__WEBPACK_IMPORTED_MODULE_10__.filterNonFailedFiles)(files);
   const filesToEmit = (0,_uppy_utils_lib_fileFilters__WEBPACK_IMPORTED_MODULE_10__.filterFilesToEmitUploadStarted)(filesFiltered);
@@ -18603,7 +18586,8 @@ async function _uploadFiles2(files) {
         if (removedFile.id === file.id) controller.abort();
       };
       this.uppy.on('file-removed', removedHandler);
-      const uploadPromise = _classPrivateFieldLooseBase(this, _uploadRemote)[_uploadRemote](file, {
+      this.resetUploaderReferences(file.id);
+      const uploadPromise = this.uploadRemoteFile(file, {
         signal: controller.signal
       });
       this.requests.wrapSyncFunction(() => {
@@ -20781,6 +20765,8 @@ window.InitializeUppy = () => {
             inline: true,
             target: "#uppy",
             showProgressDetails: true,
+            hideUploadButton: true
+            
         })
         .use(_uppy_drop_target__WEBPACK_IMPORTED_MODULE_3__["default"], {
             target: document.body
@@ -20788,6 +20774,10 @@ window.InitializeUppy = () => {
         .use(_uppy_tus__WEBPACK_IMPORTED_MODULE_2__["default"], { endpoint: TUS_ENDPOINT, limit: 6 });
 
     window.uppy = uppyDashboard;
+}
+
+window.Upload = () => {
+    window.uppy.upload();
 }
 })();
 
