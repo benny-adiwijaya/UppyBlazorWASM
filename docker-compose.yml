@@ -1,0 +1,8 @@
+version: '3.4'
+
+services:
+  uppyblazorwasm.server:
+    image: ${DOCKER_REGISTRY-}uppyblazorwasm
+    build:
+      context: .
+      dockerfile: UppyBlazorWASM/Server/Dockerfile
