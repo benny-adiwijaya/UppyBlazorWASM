@@ -7,7 +7,7 @@ import "@uppy/core/dist/style.css";
 import "@uppy/dashboard/dist/style.css";
 
 window.InitializeUppy = () => {
-    const TUS_ENDPOINT = window.location.origin + '/files';
+    const TUS_ENDPOINT = 'https://master.tus.io/files';
 
     const uppyDashboard = new Uppy({
         logger: debugLogger

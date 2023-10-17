@@ -20768,7 +20768,7 @@ __webpack_require__.r(__webpack_exports__);
 
 
 window.InitializeUppy = () => {
-    const TUS_ENDPOINT = window.location.origin + '/files';
+    const TUS_ENDPOINT = 'https://master.tus.io/files';
 
     const uppyDashboard = new _uppy_core__WEBPACK_IMPORTED_MODULE_0__["default"]({
         logger: _uppy_core__WEBPACK_IMPORTED_MODULE_0__.debugLogger
